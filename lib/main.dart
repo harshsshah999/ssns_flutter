@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:http/http.dart' as http;
 import 'package:csv/csv.dart';
 import 'dart:convert';
@@ -8,13 +9,28 @@ import 'AnalysisScreen.dart'; // Update this path to the correct path of your An
 import 'ChartData.dart';
 import 'data_loader.dart';
 
-void main() => runApp(MyApp());
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
 
+  // Initialize the notification plugin
+  final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+
+  const AndroidInitializationSettings initializationSettingsAndroid = AndroidInitializationSettings('@mipmap/ic_launcher');
+
+  final InitializationSettings initializationSettings = InitializationSettings(
+    android: initializationSettingsAndroid,
+  );
+
+  await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+
+  runApp(MyApp());
+}
 class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       home: HomeScreen(),
+      debugShowCheckedModeBanner: false, // Remove the debug label
     );
   }
 }
@@ -26,7 +42,25 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _selectedIndex = 0;
-  final List<Widget> _pages = [MainPage(), AnalysisScreen(), HistoricalDataScreen()];
+  final List<Widget> _pages = [MainPage(), AnalysisScreen()]; // Removed HistoricalDataScreen
+  FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeNotifications();
+  }
+
+  void _initializeNotifications() async {
+    const AndroidInitializationSettings initializationSettingsAndroid =
+    AndroidInitializationSettings('@mipmap/ic_launcher');
+
+    const InitializationSettings initializationSettings = InitializationSettings(
+      android: initializationSettingsAndroid,
+    );
+
+    await flutterLocalNotificationsPlugin.initialize(initializationSettings);
+  }
 
   void _onItemTapped(int index) {
     setState(() {
@@ -44,7 +78,6 @@ class _HomeScreenState extends State<HomeScreen> {
         items: [
           BottomNavigationBarItem(icon: Icon(Icons.home), label: 'Home'),
           BottomNavigationBarItem(icon: Icon(Icons.analytics), label: 'Analysis'),
-          BottomNavigationBarItem(icon: Icon(Icons.history), label: 'Historical Data'),
         ],
       ),
     );
@@ -60,12 +93,25 @@ class _MainPageState extends State<MainPage> {
   int latestCO2 = 920;
   Timer? _timer;
   late Future<List<ChartData>> _aqiData;
+  late Future<List<ChartData>> _aqi24hData;
+  late Future<List<ChartData>> _hourlyCO2Data;
+  double latestTemperature = 0; // Default value for latestTemperature
+  double latestAQI = 0; // Default value for latestAQI
+  double latestHumidity = 0;
+  FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
 
   @override
   void initState() {
     super.initState();
     _startAutoRefresh();
+    _fetchLatestSensorData(); // Fetch the latest sensor data initially
     _aqiData = DataLoader.fetchCSVData('https://cillyfox.com/ssns/daily_averages_sensor_data.csv', 'PM2.5');
+    _aqi24hData = DataLoader.fetchAQI24hData('https://cillyfox.com/ssns/aqi_data_24h.csv');
+    _hourlyCO2Data = DataLoader.fetchPeakHourData(
+      'https://cillyfox.com/ssns/peak_hour_data.csv',
+      'CO2 (ppm)',
+      'Peak_Hour_CO2',
+    );
   }
 
   @override
@@ -75,15 +121,15 @@ class _MainPageState extends State<MainPage> {
   }
 
   void _startAutoRefresh() {
-    _timer = Timer.periodic(Duration(seconds: 3), (timer) {
-      _fetchLatestCO2();
+    _timer = Timer.periodic(Duration(seconds: 30), (timer) {
+      _fetchLatestSensorData();
     });
   }
 
-  Future<void> _fetchLatestCO2() async {
-    print('Fetching latest CO2...');
+  Future<void> _fetchLatestSensorData() async {
+    print('Fetching latest sensor data...');
     try {
-      final url = Uri.parse('https://cillyfox.com/ssns/output.csv?timestamp=${DateTime.now().millisecondsSinceEpoch}');
+      final url = Uri.parse('https://cillyfox.com/ssns/sensor_data.csv?timestamp=${DateTime.now().millisecondsSinceEpoch}');
       final response = await http.get(
         url,
         headers: {
@@ -95,23 +141,115 @@ class _MainPageState extends State<MainPage> {
 
       if (response.statusCode == 200) {
         final csvData = const Utf8Decoder().convert(response.bodyBytes);
-        List<List<dynamic>> rowsAsListOfValues = const CsvToListConverter().convert(csvData);
-        print('CSV Data: $rowsAsListOfValues');
-        final lastRow = rowsAsListOfValues.last;
-        print('Last Row: $lastRow');
-        final latestCO2String = lastRow.first.toString().split(' ').last;
-        print('Latest CO2 fetched: $latestCO2String');
-        setState(() {
-          latestCO2 = int.parse(latestCO2String);
-        });
+        List<List<dynamic>> rowsAsListOfValues = const CsvToListConverter(eol: "\n").convert(csvData);
+
+        if (rowsAsListOfValues.isNotEmpty) {
+          final lastRow = rowsAsListOfValues.last;
+          print('Last Row: $lastRow');
+
+          setState(() {
+            latestCO2 = int.parse(lastRow[3].toString()); // CO2 (ppm) column
+            latestTemperature = double.parse(lastRow[4].toString()); // Temperature (C) column
+            latestAQI = double.parse(lastRow[7].toString()); // pm2.5 column, you can apply AQI formula here
+            latestHumidity = double.parse(lastRow[5].toString()); // Humidity column
+          });
+        } else {
+          print('CSV data is empty');
+        }
       } else {
         print('Failed to load CSV: ${response.statusCode}');
         throw Exception('Failed to load CSV');
       }
     } catch (e) {
-      print('Error fetching CO2: $e');
+      print('Error fetching sensor data: $e');
     }
   }
+
+  Future<String> _getSummaryAndSuggestions() async {
+    String summary = '';
+    String suggestions = '';
+    int notificationId = 0;
+
+    // CO2 Level Analysis
+    if (latestCO2 > 1000) {
+      summary += 'The CO2 level is currently $latestCO2 ppm, which is higher than recommended.\n';
+      suggestions += '1. Ensure proper ventilation to lower CO2 levels.\n';
+      await _scheduleNotification(
+          notificationId++, 'High CO2 Levels', 'Ensure proper ventilation to lower CO2 levels.');
+    } else {
+      summary += 'The CO2 level is currently $latestCO2 ppm, which is within the normal range.\n';
+      suggestions += '1. Maintain proper ventilation to keep CO2 levels normal.\n';
+    }
+
+    // Humidity Level Analysis
+    if (latestHumidity > 60) {
+      summary += 'With a high humidity level of ${latestHumidity.toStringAsFixed(1)}%, the air feels quite muggy.\n';
+      suggestions += '2. Consider using a dehumidifier to reduce indoor humidity.\n';
+      await _scheduleNotification(
+          notificationId++, 'High Humidity Levels', 'Consider using a dehumidifier to reduce indoor humidity.');
+    } else {
+      summary += 'The humidity level is ${latestHumidity.toStringAsFixed(1)}%, which is comfortable.\n';
+    }
+
+    // AQI Level Analysis
+    if (latestAQI > 100) {
+      summary += 'The PM 2.5 concentration is ${latestAQI.toStringAsFixed(1)} µg/m³, which is above the safe limit.\n';
+      suggestions += '3. Consider using an air purifier to reduce particulate matter indoors.\n';
+      suggestions += '4. If you have respiratory issues, avoid strenuous outdoor activities today.\n';
+      await _scheduleNotification(
+          notificationId++, 'High PM 2.5 Levels', 'Consider using an air purifier to reduce particulate matter indoors.');
+      await _scheduleNotification(
+          notificationId++, 'High PM 2.5 Levels', 'If you have respiratory issues, avoid strenuous outdoor activities today.');
+    } else {
+      summary += 'The PM 2.5 concentration is ${latestAQI.toStringAsFixed(1)} µg/m³, which is acceptable.\n';
+    }
+
+    // Peak Temperature Analysis
+    double peakTemperature = await _getPeakTemperature();
+    summary += 'The peak temperature today was ${peakTemperature.toStringAsFixed(1)}°C.\n';
+    if (peakTemperature > 30) {
+      suggestions += '5. It is quite hot today. Stay hydrated and avoid outdoor activities during peak hours.\n';
+      await _scheduleNotification(notificationId++, 'High Temperature', 'Stay hydrated and avoid outdoor activities during peak hours.');
+    } else if (peakTemperature < 10) {
+      suggestions += '5. It is quite cold today. Wear warm clothes and stay indoors if possible.\n';
+      await _scheduleNotification(notificationId++, 'Low Temperature', 'Wear warm clothes and stay indoors if possible.');
+    }
+
+    return summary + '\nSuggestions:\n' + suggestions;
+  }
+
+  Future<double> _getPeakTemperature() async {
+    try {
+      final temperatureData = await DataLoader.fetchCSVData('https://cillyfox.com/ssns/daily_averages_sensor_data.csv', 'Temperature');
+      if (temperatureData.isNotEmpty) {
+        return temperatureData.map((data) => data.y).reduce((a, b) => a > b ? a : b); // Find peak temperature
+      } else {
+        return 0.0; // Default value if no data is found
+      }
+    } catch (e) {
+      print('Error fetching peak temperature: $e');
+      return 0.0; // Default value if there's an error
+    }
+  }
+
+  Future<void> _scheduleNotification(int id, String title, String body) async {
+    const AndroidNotificationDetails androidPlatformChannelSpecifics =
+    AndroidNotificationDetails(
+        'your_channel_id', // id
+        'your_channel_name', // name
+        channelDescription: 'your_channel_description', // description
+        importance: Importance.max,
+        priority: Priority.high,
+        showWhen: false);
+
+    const NotificationDetails platformChannelSpecifics =
+    NotificationDetails(android: androidPlatformChannelSpecifics);
+
+    await flutterLocalNotificationsPlugin.show(
+        id, title, body, platformChannelSpecifics);
+  }
+
+
 
   @override
   Widget build(BuildContext context) {
@@ -129,16 +267,24 @@ class _MainPageState extends State<MainPage> {
           children: [
             _buildCurrentInfoCard(),
             SizedBox(height: 16),
-            _buildSummaryCard(),
+            FutureBuilder<String>(
+              future: _getSummaryAndSuggestions(),
+              builder: (context, snapshot) {
+                if (snapshot.connectionState == ConnectionState.waiting) {
+                  return Center(child: CircularProgressIndicator());
+                } else if (snapshot.hasError) {
+                  return Center(child: Text('Error loading summary and suggestions: ${snapshot.error}'));
+                } else {
+                  return _buildSummaryCard(snapshot.data ?? '');
+                }
+              },
+            ),
+
             SizedBox(height: 16),
-            _buildAQIOvertime(),
+            _buildAQI24hChart(),
             SizedBox(height: 16),
             _buildAverageCO2Daily(),
             SizedBox(height: 16),
-            ElevatedButton(
-              onPressed: _fetchLatestCO2,
-              child: Text('Refresh CO2'),
-            ),
           ],
         ),
       ),
@@ -158,9 +304,9 @@ class _MainPageState extends State<MainPage> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                _buildInfoColumn('Temperature', '25°C'),
-                _buildInfoColumn('AQI', '50'),
-                _buildInfoColumn('Humidity', '70%'),
+                _buildInfoColumn('Temperature', '${latestTemperature.toStringAsFixed(1)}°C'),
+                _buildInfoColumn('AQI', latestAQI.toStringAsFixed(1)),
+                _buildInfoColumn('Humidity', '${latestHumidity.toStringAsFixed(1)}%'),
               ],
             ),
           ],
@@ -179,7 +325,7 @@ class _MainPageState extends State<MainPage> {
     );
   }
 
-  Widget _buildSummaryCard() {
+  Widget _buildSummaryCard(String summaryAndSuggestions) {
     return Card(
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       elevation: 4,
@@ -191,12 +337,7 @@ class _MainPageState extends State<MainPage> {
             Text('Summary & Suggestions', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
             SizedBox(height: 8),
             Text(
-              'The CO2 level is currently 920 ppm, which is within the normal range. With a high humidity level of 70%, the air feels quite muggy. '
-                  'The PM 2.5 concentration is slightly elevated at 12 µg/m³, which is acceptable but could be better.\n\n'
-                  'Suggestions:\n'
-                  '1. Ensure proper ventilation to maintain CO2 levels and reduce indoor humidity.\n'
-                  '2. Consider using an air purifier to reduce particulate matter indoors.\n'
-                  '3. If you have respiratory issues, avoid strenuous outdoor activities today.',
+              summaryAndSuggestions,
               style: TextStyle(fontSize: 16),
             ),
           ],
@@ -205,23 +346,21 @@ class _MainPageState extends State<MainPage> {
     );
   }
 
-  Widget _buildAQIOvertime() {
+  Widget _buildAQI24hChart() {
     return FutureBuilder<List<ChartData>>(
-      future: _aqiData,
+      future: _aqi24hData,
       builder: (context, snapshot) {
-        print('Connection state: ${snapshot.connectionState}'); // Debugging line
-
         if (snapshot.connectionState == ConnectionState.waiting) {
           return Center(child: CircularProgressIndicator());
         } else if (snapshot.hasError) {
-          print('Error: ${snapshot.error}');
-          return Center(child: Text('Error loading data: ${snapshot.error}'));
+          return Center(child: Text('Error loading AQI 24h data'));
         } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
-          print('Snapshot has no data or data is empty');
-          print('Snapshot data: ${snapshot.data}'); // Debugging line
           return Center(child: Text('No data available'));
         } else {
           final aqiData = snapshot.data!;
+          // Take only the last 24 entries
+          final last24Data = aqiData.length > 24 ? aqiData.sublist(aqiData.length - 24) : aqiData;
+
           return Card(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             elevation: 4,
@@ -230,12 +369,17 @@ class _MainPageState extends State<MainPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text('AQI Overtime', style: TextStyle(fontSize: 18)),
+                  Text('AQI Over the Last 24 Hours', style: TextStyle(fontSize: 18)),
                   SizedBox(height: 8),
                   Container(
                     height: 300,
                     child: SfCartesianChart(
-                      primaryXAxis: CategoryAxis(),
+                      primaryXAxis: CategoryAxis(
+                        title: AxisTitle(text: 'Hour'),
+                        majorGridLines: MajorGridLines(width: 0),
+                        labelPlacement: LabelPlacement.onTicks,
+                        edgeLabelPlacement: EdgeLabelPlacement.shift,
+                      ),
                       primaryYAxis: NumericAxis(
                         title: AxisTitle(text: 'AQI Levels'),
                         plotBands: <PlotBand>[
@@ -315,8 +459,13 @@ class _MainPageState extends State<MainPage> {
                       ),
                       series: <ChartSeries>[
                         LineSeries<ChartData, String>(
-                          dataSource: aqiData,
-                          xValueMapper: (ChartData data, _) => data.x,
+                          dataSource: last24Data,
+                          xValueMapper: (ChartData data, _) {
+                            DateTime dateTime = DateTime.parse(data.x);
+                            String period = dateTime.hour >= 12 ? 'PM' : 'AM';
+                            int hour = dateTime.hour > 12 ? dateTime.hour - 12 : dateTime.hour;
+                            return '$hour $period';
+                          },
                           yValueMapper: (ChartData data, _) => data.y,
                           dataLabelSettings: DataLabelSettings(isVisible: true),
                         ),
@@ -333,31 +482,50 @@ class _MainPageState extends State<MainPage> {
     );
   }
 
-
   Widget _buildAverageCO2Daily() {
-    return Card(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      elevation: 4,
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Text('Average CO2 Levels Throughout The Day', style: TextStyle(fontSize: 18)),
-            SizedBox(height: 8),
-            _buildDailyBar('7 AM', 420),
-            _buildDailyBar('10 AM', 430),
-            _buildDailyBar('1 PM', 450),
-            _buildDailyBar('4 PM', 460),
-            _buildDailyBar('7 PM', 480),
-            _buildDailyBar('10 PM', 500),
-          ],
-        ),
-      ),
+    return FutureBuilder<List<ChartData>>(
+        future: _hourlyCO2Data,
+        builder: (context, snapshot) {
+      if (snapshot.connectionState == ConnectionState.waiting) {
+        return Center(child: CircularProgressIndicator());
+      } else if (snapshot.hasError) {
+        return Center(child: Text('Error loading CO2 data'));
+      } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
+        return Center(child: Text('No data available'));
+      } else {
+        final co2Data = snapshot.data!;
+        final List<ChartData> filteredData = [];
+        for (int i = co2Data.length - 1; i >= 24; i = i - 2) { // Adjusted step from 3 to 1
+          filteredData.add(co2Data[i]);
+        }
+
+        return Card(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            elevation: 4,
+            child: Padding(
+            padding: const EdgeInsets.all(16.0),
+    child: Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+    Text('Average CO2 Levels Throughout The Day', style: TextStyle(fontSize: 18)),
+    SizedBox(height: 8),
+    Column(
+    children: filteredData.map((data) {
+    final DateTime dateTime = DateTime.parse(data.x);
+    final String hourLabel = '${dateTime.hour}:00';
+    return _buildDailyBar(hourLabel, data.y, data.isPeak); // Change from isPredicted to isPeak
+    }).toList(),
+    ),
+    ],
+    ),
+            ),
+        );
+      }
+        },
     );
   }
 
-  Widget _buildDailyBar(String time, int value) {
+  Widget _buildDailyBar(String time, double value, bool isPeak) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
@@ -366,13 +534,13 @@ class _MainPageState extends State<MainPage> {
           SizedBox(width: 8),
           Expanded(
             child: LinearProgressIndicator(
-              value: value / 600,
+              value: value / 2500, // Adjusted the scale for better visualization
               backgroundColor: Colors.grey[300],
-              valueColor: AlwaysStoppedAnimation<Color>(Colors.purple),
+              valueColor: AlwaysStoppedAnimation<Color>(isPeak ? Colors.orange : Colors.purple), // Ensure orange is used for peak values
             ),
           ),
           SizedBox(width: 8),
-          Text('$value ppm'),
+          Text('${value.toStringAsFixed(2)} ppm'),
         ],
       ),
     );
@@ -388,19 +556,5 @@ class _MainPageState extends State<MainPage> {
       ChartData('Sat', 205),
       ChartData('Sun', 40),
     ];
-  }
-}
-
-class HistoricalDataScreen extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text('Historical Data'),
-      ),
-      body: Center(
-        child: Text('Historical Data Screen Content Goes Here'),
-      ),
-    );
   }
 }

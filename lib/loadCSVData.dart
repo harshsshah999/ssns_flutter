@@ -26,3 +26,4 @@ Future<List<ChartData>> loadCSVData(String filePath, String columnName) async {
 
   return chartData;
 }
+
