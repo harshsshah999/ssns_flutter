@@ -123,11 +123,13 @@ class DataLoader {
       'Pragma': 'no-cache',
       'Expires': '0',
     });
+    print("IN YEAH");
 
     if (response.statusCode == 200) {
       final csvData = utf8.decode(response.bodyBytes);
       final normalizedCsvData = csvData.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
       List<List<dynamic>> rows = const CsvToListConverter(eol: '\n', fieldDelimiter: ',').convert(normalizedCsvData);
+      print("IN YEAH 2");
 
       final List<ChartData> chartData = [];
       for (var row in rows.skip(1)) {
@@ -135,10 +137,12 @@ class DataLoader {
         double pm25 = double.parse(row[1].toString());
         double pm10 = double.parse(row[2].toString());
         chartData.add(ChartData(hour, pm25, pm10: pm10));
+        print("ADDING YEAH");
       }
 
       return chartData;
     } else {
+      print("Failed YEAH 2");
       throw Exception('Failed to load AQI 24h data');
     }
   }
