@@ -92,9 +92,10 @@ class MainPage extends StatefulWidget {
 class _MainPageState extends State<MainPage> {
   int latestCO2 = 920;
   Timer? _timer;
-  late Future<List<ChartData>> _aqiData;
   late Future<List<ChartData>> _aqi24hData;
   late Future<List<ChartData>> _hourlyCO2Data;
+  late Future<List<ChartData>> _predictedAQIData;
+
   double latestTemperature = 0; // Default value for latestTemperature
   double latestAQI = 0; // Default value for latestAQI
   double latestHumidity = 0;
@@ -105,13 +106,14 @@ class _MainPageState extends State<MainPage> {
     super.initState();
     _startAutoRefresh();
     _fetchLatestSensorData(); // Fetch the latest sensor data initially
-    _aqiData = DataLoader.fetchCSVData('https://cillyfox.com/ssns/daily_averages_sensor_data.csv', 'PM2.5');
-    _aqi24hData = DataLoader.fetchAQI24hData('https://cillyfox.com/ssns/aqi_data_24h.csv');
+    _aqi24hData = DataLoader.fetchAQI24hData('https://cillyfox.com/ssns/aqi_data_24hrs.csv');
     _hourlyCO2Data = DataLoader.fetchPeakHourData(
       'https://cillyfox.com/ssns/peak_hour_data.csv',
       'CO2 (ppm)',
       'Peak_Hour_CO2',
     );
+    _predictedAQIData = DataLoader.fetchPredictedAQIData('https://cillyfox.com/ssns/pred_file3.csv');
+
   }
 
   @override
@@ -213,6 +215,22 @@ class _MainPageState extends State<MainPage> {
     } else if (peakTemperature < 10) {
       suggestions += '5. It is quite cold today. Wear warm clothes and stay indoors if possible.\n';
       await _scheduleNotification(notificationId++, 'Low Temperature', 'Wear warm clothes and stay indoors if possible.');
+    }
+
+    // Predicted AQI Analysis
+    final predictedAQIData = await _predictedAQIData;
+    if (predictedAQIData.isNotEmpty) {
+      final worstPredictedAQI = predictedAQIData.reduce((a, b) => a.y > b.y ? a : b);
+      final worstHour = worstPredictedAQI.x;
+      final worstAQIValue = worstPredictedAQI.y;
+
+      summary += 'The worst predicted AQI today will be at $worstHour with a value of $worstAQIValue µg/m³.\n';
+      if (worstAQIValue > 100) {
+        suggestions += '6. The air quality will be poor at $worstHour. Consider ventilating or using an air purifier.\n';
+        await _scheduleNotification(notificationId++, 'Poor Predicted Air Quality', 'The air quality will be poor at $worstHour with a value of $worstAQIValue µg/m³. Consider ventilating or using an air purifier.');
+      } else {
+        suggestions += '6. The predicted air quality is expected to remain within safe levels throughout the day.\n';
+      }
     }
 
     return summary + '\nSuggestions:\n' + suggestions;
@@ -466,7 +484,7 @@ class _MainPageState extends State<MainPage> {
                             int hour = dateTime.hour > 12 ? dateTime.hour - 12 : dateTime.hour;
                             return '$hour $period';
                           },
-                          yValueMapper: (ChartData data, _) => data.y,
+                          yValueMapper: (ChartData data, _) => data.overallAQI,
                           dataLabelSettings: DataLabelSettings(isVisible: true),
                         ),
                       ],

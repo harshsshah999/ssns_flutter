@@ -41,17 +41,73 @@ class AnalysisScreen extends StatelessWidget {
                 }
               },
             ),
+            //SizedBox(height: 16),
+            //_buildAQI24hChartWithPM(),
             SizedBox(height: 16),
-            _buildAQI24hChartWithPM(),
+            _buildPredictedAQIChart(),
           ],
         ),
       ),
     );
   }
 
+  Widget _buildPredictedAQIChart() {
+    return FutureBuilder<List<ChartData>>(
+      future: DataLoader.fetchPredictedAQIData('https://cillyfox.com/ssns/pred_file3.csv'),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Center(child: CircularProgressIndicator());
+        } else if (snapshot.hasError) {
+          return Center(child: Text('Error loading predicted AQI data'));
+        } else if (!snapshot.hasData || snapshot.data!.isEmpty) {
+          return Center(child: Text('No data available'));
+        } else {
+          final predictedAQIData = snapshot.data!;
+          return Card(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            elevation: 4,
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('Predicted AQI for the Next 24 Hours', style: TextStyle(fontSize: 18)),
+                  SizedBox(height: 8),
+                  Container(
+                    height: 300,
+                    child: SfCartesianChart(
+                      primaryXAxis: CategoryAxis(
+                        title: AxisTitle(text: 'Hour'),
+                        majorGridLines: MajorGridLines(width: 0),
+                        labelPlacement: LabelPlacement.onTicks,
+                        edgeLabelPlacement: EdgeLabelPlacement.shift,
+                      ),
+                      primaryYAxis: NumericAxis(
+                        title: AxisTitle(text: 'Predicted AQI Levels'),
+                      ),
+                      series: <ChartSeries>[
+                        LineSeries<ChartData, String>(
+                          dataSource: predictedAQIData,
+                          xValueMapper: (ChartData data, _) => data.x,
+                          yValueMapper: (ChartData data, _) => data.y,
+                          dataLabelSettings: DataLabelSettings(isVisible: true),
+                        ),
+                      ],
+                      tooltipBehavior: TooltipBehavior(enable: true),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        }
+      },
+    );
+  }
+
   Widget _buildAQI24hChartWithPM() {
     return FutureBuilder<List<ChartData>>(
-      future: DataLoader.fetchAQI24hData('https://cillyfox.com/ssns/aqi_data_24h.csv'),
+      future: DataLoader.fetchAQI24hData('https://cillyfox.com/ssns/aqi_data_24hrs.csv'),
       builder: (context, snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return Center(child: CircularProgressIndicator());
