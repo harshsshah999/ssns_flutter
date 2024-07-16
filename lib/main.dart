@@ -97,7 +97,9 @@ class _MainPageState extends State<MainPage> {
   late Future<List<ChartData>> _predictedAQIData;
 
   double latestTemperature = 0; // Default value for latestTemperature
-  double latestAQI = 0; // Default value for latestAQI
+  int latestAQI = 0; // Default value for latestAQI
+  double latestPMC = 0; // Default value for latestPMC
+
   double latestHumidity = 0;
   FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
 
@@ -106,13 +108,13 @@ class _MainPageState extends State<MainPage> {
     super.initState();
     _startAutoRefresh();
     _fetchLatestSensorData(); // Fetch the latest sensor data initially
-    _aqi24hData = DataLoader.fetchAQI24hData('https://cillyfox.com/ssns/aqi_data_24hrs.csv');
+    _aqi24hData = DataLoader.fetchAQI24hData('https://cillyfox.com/ssns/aqi_data_last_24hrs.csv');
     _hourlyCO2Data = DataLoader.fetchPeakHourData(
-      'https://cillyfox.com/ssns/peak_hour_data.csv',
+      'https://cillyfox.com/ssns/peak_hour_data_new.csv',
       'CO2 (ppm)',
       'Peak_Hour_CO2',
     );
-    _predictedAQIData = DataLoader.fetchPredictedAQIData('https://cillyfox.com/ssns/pred_file3.csv');
+    _predictedAQIData = DataLoader.fetchPredictedAQIData('https://cillyfox.com/ssns/pred_file_latest.csv');
 
   }
 
@@ -152,7 +154,7 @@ class _MainPageState extends State<MainPage> {
           setState(() {
             latestCO2 = int.parse(lastRow[3].toString()); // CO2 (ppm) column
             latestTemperature = double.parse(lastRow[4].toString()); // Temperature (C) column
-            latestAQI = double.parse(lastRow[7].toString()); // pm2.5 column, you can apply AQI formula here
+            latestPMC = double.parse(lastRow[7].toString()); // pm2.5 column, you can apply AQI formula here
             latestHumidity = double.parse(lastRow[5].toString()); // Humidity column
           });
         } else {
@@ -195,7 +197,7 @@ class _MainPageState extends State<MainPage> {
 
     // AQI Level Analysis
     if (latestAQI > 100) {
-      summary += 'The PM 2.5 concentration is ${latestAQI.toStringAsFixed(1)} µg/m³, which is above the safe limit.\n';
+      summary += 'The latest AQI is ${latestAQI.toString()}, which is above the safe limit.\n';
       suggestions += '3. Consider using an air purifier to reduce particulate matter indoors.\n';
       suggestions += '4. If you have respiratory issues, avoid strenuous outdoor activities today.\n';
       await _scheduleNotification(
@@ -203,12 +205,13 @@ class _MainPageState extends State<MainPage> {
       await _scheduleNotification(
           notificationId++, 'High PM 2.5 Levels', 'If you have respiratory issues, avoid strenuous outdoor activities today.');
     } else {
-      summary += 'The PM 2.5 concentration is ${latestAQI.toStringAsFixed(1)} µg/m³, which is acceptable.\n';
+    //  summary += 'The PM 2.5 concentration is ${latestPMC.toStringAsFixed(1)} µg/m³, which is acceptable.\n';
+      summary += 'Most recent AQI is ${latestAQI.toString()} , which is acceptable.\n';
     }
 
     // Peak Temperature Analysis
-    double peakTemperature = await _getPeakTemperature();
-    summary += 'The peak temperature today was ${peakTemperature.toStringAsFixed(1)}°C.\n';
+    int peakTemperature = await _getPeakTemperature();
+    summary += 'The peak temperature today was ${peakTemperature.toString()}°C.\n';
     if (peakTemperature > 30) {
       suggestions += '5. It is quite hot today. Stay hydrated and avoid outdoor activities during peak hours.\n';
       await _scheduleNotification(notificationId++, 'High Temperature', 'Stay hydrated and avoid outdoor activities during peak hours.');
@@ -222,12 +225,12 @@ class _MainPageState extends State<MainPage> {
     if (predictedAQIData.isNotEmpty) {
       final worstPredictedAQI = predictedAQIData.reduce((a, b) => a.y > b.y ? a : b);
       final worstHour = worstPredictedAQI.x;
-      final worstAQIValue = worstPredictedAQI.y;
+      final worstAQIValue = worstPredictedAQI.y.toInt();
 
-      summary += 'The worst predicted AQI today will be at $worstHour with a value of $worstAQIValue µg/m³.\n';
+      summary += 'The worst predicted AQI today will be at $worstHour hours with a value of $worstAQIValue.\n';
       if (worstAQIValue > 100) {
         suggestions += '6. The air quality will be poor at $worstHour. Consider ventilating or using an air purifier.\n';
-        await _scheduleNotification(notificationId++, 'Poor Predicted Air Quality', 'The air quality will be poor at $worstHour with a value of $worstAQIValue µg/m³. Consider ventilating or using an air purifier.');
+        await _scheduleNotification(notificationId++, 'Poor Predicted Air Quality', 'The air quality will be poor at $worstHour with a value of $worstAQIValue. Consider ventilating or using an air purifier.');
       } else {
         suggestions += '6. The predicted air quality is expected to remain within safe levels throughout the day.\n';
       }
@@ -236,17 +239,27 @@ class _MainPageState extends State<MainPage> {
     return summary + '\nSuggestions:\n' + suggestions;
   }
 
-  Future<double> _getPeakTemperature() async {
+  Future<int> _getPeakTemperature() async {
     try {
-      final temperatureData = await DataLoader.fetchCSVData('https://cillyfox.com/ssns/daily_averages_sensor_data.csv', 'Temperature');
-      if (temperatureData.isNotEmpty) {
-        return temperatureData.map((data) => data.y).reduce((a, b) => a > b ? a : b); // Find peak temperature
+      final peakHourData = await DataLoader.fetchPeakHourData(
+          'https://cillyfox.com/ssns/peak_hour_data_new.csv',
+          'Temperature (C)',
+          'Peak_Hour_Temperature');
+      if (peakHourData.isNotEmpty) {
+        // Filter to get only the peak hour data
+        final peakTemperatureData = peakHourData.where((data) => data.isPeak).toList();
+        if (peakTemperatureData.isNotEmpty) {
+          // Find the peak temperature
+          return peakTemperatureData.map((data) => data.y).reduce((a, b) => a > b ? a : b).toInt();
+        } else {
+          return 0; // Default value if no peak data is found
+        }
       } else {
-        return 0.0; // Default value if no data is found
+        return 0; // Default value if no data is found
       }
     } catch (e) {
       print('Error fetching peak temperature: $e');
-      return 0.0; // Default value if there's an error
+      return 0; // Default value if there's an error
     }
   }
 
@@ -322,9 +335,9 @@ class _MainPageState extends State<MainPage> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                _buildInfoColumn('Temperature', '${latestTemperature.toStringAsFixed(1)}°C'),
-                _buildInfoColumn('AQI', latestAQI.toStringAsFixed(1)),
-                _buildInfoColumn('Humidity', '${latestHumidity.toStringAsFixed(1)}%'),
+                _buildInfoColumn('Temperature', '${latestTemperature.toString()}°C'),
+                _buildInfoColumn('AQI', latestAQI.toString()),
+                _buildInfoColumn('Humidity', '${latestHumidity.toString()}%'),
               ],
             ),
           ],
@@ -378,7 +391,8 @@ class _MainPageState extends State<MainPage> {
           final aqiData = snapshot.data!;
           // Take only the last 24 entries
           final last24Data = aqiData.length > 24 ? aqiData.sublist(aqiData.length - 24) : aqiData;
-
+          final lastRow = aqiData.last; // Get the last row from the aqiData
+          latestAQI = lastRow.overallAQI?.toDouble().toInt() ?? 0;
           return Card(
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
             elevation: 4,
@@ -513,7 +527,7 @@ class _MainPageState extends State<MainPage> {
       } else {
         final co2Data = snapshot.data!;
         final List<ChartData> filteredData = [];
-        for (int i = co2Data.length - 1; i >= 24; i = i - 2) { // Adjusted step from 3 to 1
+        for (int i = 0; i < 24; i = i + 2) { // Adjusted step from 3 to 1
           filteredData.add(co2Data[i]);
         }
 
