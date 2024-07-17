@@ -173,7 +173,6 @@ class _MainPageState extends State<MainPage> {
     String summary = '';
     String suggestions = '';
     int notificationId = 0;
-
     // CO2 Level Analysis
     if (latestCO2 > 1000) {
       summary += 'The CO2 level is currently $latestCO2 ppm, which is higher than recommended.\n';
@@ -182,6 +181,7 @@ class _MainPageState extends State<MainPage> {
           notificationId++, 'High CO2 Levels', 'Ensure proper ventilation to lower CO2 levels.');
     } else {
       summary += 'The CO2 level is currently $latestCO2 ppm, which is within the normal range.\n';
+
       suggestions += '1. Maintain proper ventilation to keep CO2 levels normal.\n';
     }
 
@@ -227,7 +227,7 @@ class _MainPageState extends State<MainPage> {
       final worstHour = worstPredictedAQI.x;
       final worstAQIValue = worstPredictedAQI.y.toInt();
 
-      summary += 'The worst predicted AQI today will be at $worstHour hours with a value of $worstAQIValue.\n';
+      summary += 'The worst predicted AQI tomorrow will be at $worstHour hours with a value of $worstAQIValue.\n';
       if (worstAQIValue > 100) {
         suggestions += '6. The air quality will be poor at $worstHour. Consider ventilating or using an air purifier.\n';
         await _scheduleNotification(notificationId++, 'Poor Predicted Air Quality', 'The air quality will be poor at $worstHour with a value of $worstAQIValue. Consider ventilating or using an air purifier.');
@@ -527,8 +527,14 @@ class _MainPageState extends State<MainPage> {
       } else {
         final co2Data = snapshot.data!;
         final List<ChartData> filteredData = [];
-        for (int i = 0; i < 24; i = i + 2) { // Adjusted step from 3 to 1
-          filteredData.add(co2Data[i]);
+        for (int i = 0; i < 24; i = i + 1) { // Adjusted step from 3 to 1
+          if(co2Data[i].isPeak){
+            filteredData.add(co2Data[i]);
+          }else if(i%2==0){
+            filteredData.add(co2Data[i]);
+
+          }
+
         }
 
         return Card(

@@ -314,7 +314,7 @@ class AnalysisScreen extends StatelessWidget {
     final last24Data = data.length > 24 ? data.sublist(data.length - 24) : data;
 
     // Determine the minimum and maximum y-values
-    final yValues = last24Data.map((data) => data.y).toList();
+    final yValues = last24Data.map((data) => data.y.toInt()).toList(); // Cast to int
     final minY = yValues.reduce((a, b) => a < b ? a : b);
     final maxY = yValues.reduce((a, b) => a > b ? a : b);
 
@@ -342,8 +342,8 @@ class AnalysisScreen extends StatelessWidget {
                 ),
                 primaryYAxis: NumericAxis(
                   title: AxisTitle(text: 'Temperature (°C)'),
-                  minimum: minY - 3, // Add some padding
-                  maximum: maxY + 3, // Add some padding
+                  minimum: minY - 3.toDouble(), // Add some padding and cast to double
+                  maximum: maxY + 3.toDouble(), // Add some padding and cast to double
                   interval: ((maxY - minY) / 5).ceilToDouble(), // Dynamically set interval
                   labelStyle: TextStyle(fontSize: 12),
                   decimalPlaces: 0,
@@ -356,7 +356,7 @@ class AnalysisScreen extends StatelessWidget {
                       DateTime dateTime = DateTime.parse(data.x);
                       return '${dateTime.hour}';
                     },
-                    yValueMapper: (ChartData data, _) => data.y,
+                    yValueMapper: (ChartData data, _) => data.y.toInt(), // Cast to int
                     dataLabelSettings: DataLabelSettings(
                       isVisible: true,
                       labelAlignment: ChartDataLabelAlignment.top,
@@ -377,7 +377,7 @@ class AnalysisScreen extends StatelessWidget {
                       DateTime dateTime = DateTime.parse(data.x);
                       return '${dateTime.hour}';
                     },
-                    yValueMapper: (ChartData data, _) => data.y,
+                    yValueMapper: (ChartData data, _) => data.y.toInt(), // Cast to int
                     markerSettings: MarkerSettings(
                       isVisible: true,
                       shape: DataMarkerType.diamond,
